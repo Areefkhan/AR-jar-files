@@ -1,0 +1,286 @@
+SUBROUTINE AR.UTILS(request, response)
+*PROGRAM AR.UTILS
+
+* Sample Request and Response
+
+* getScriptListIdRequestJson = '{ "requestType": "GET.SCRIPT.ID.LIST", "scriptGroup": "ALL/ID" "page": 1, "size": 20 }'
+* getScriptGroupListRequestJson = '{ "requestType": "GET.SCRIPT.GROUP.LIST", "page": 1, "size": 20 }'
+    
+* getScriptGrouptListResponseJson = '{ "page": 1, "size": 2, "response": [ { "execution Time": "1s", "full Description": "my full Description", "id": "SCRIP1", "shortDescription": "my shortDescription", "status": "pass", "product": "Lending" }, { "execution Time": "1s", "full Description": "my full Description", "id": "SCRIP2", "shortDescription": "my shortDescription", "status": "pass", "product": "Securities" } ] }'
+    
+* Date mapping
+* Day 1 = 26 Dec 2025
+* Day 2 = 29 Dec 2025
+* Day 3 = 31 Dec 2025
+* Day 4 = 1 Jan 2026
+* Day 5 = 2 Jan 2026
+* Day 6 = 5 Jan 2026
+*-----------------------------------------------------------------------------
+*request = '{ "requestType": "GET.SCRIPT.GROUP.LIST", "page": 1, "size": 20 }'
+*request = '{ "requestType": "GET.SCRIPT.ID.LIST", "scriptGroup": "SCRPT10001" ,"page": 1, "size": 20 }'
+    response = ""
+
+    $USING TF.Complex
+    $INSERT I_F.AR.SCRIPT.GROUP
+    $INSERT I_F.AR.APP.FIELD.VALUES
+
+    GOSUB init ; *
+
+    IF error THEN
+        RETURN
+    END
+
+    BEGIN CASE
+        
+        CASE requestType EQ "GET.SCRIPT.GROUP.LIST"     ;* get script group list
+            GOSUB getScriptGroupList ; *
+
+        CASE requestType EQ "GET.SCRIPT.ID.LIST"        ;* get script id list
+            GOSUB getScriptIdList ; *
+            
+        CASE 1                                          ;* just return
+    END CASE
+    
+RETURN
+*-----------------------------------------------------------------------------
+
+*** <region name= init>
+init:
+*** <desc> </desc>
+
+    response = TF.Complex.createObject()
+    requestType = TF.Complex.get(request, "requestType")
+    page = 1
+    size = 20
+    error = ""
+    
+    IF NOT(requestType) OR NOT(requestType MATCHES "GET.SCRIPT.GROUP.LIST":@VM:"GET.SCRIPT.ID.LIST") THEN
+        error = "Request Type Not Supported"
+        TF.Complex.put(response, "error", error)
+    END
+    
+    tempPage = TF.Complex.get(request, "page")
+    tempSize = TF.Complex.get(request, "size")
+    
+    IF tempPage THEN
+        page = tempPage
+    END
+    
+    IF tempSize THEN
+        size = tempSize
+    END
+    
+    IF NOT(error) THEN
+        TF.Complex.put(response, "page", page)
+        TF.Complex.put(response, "size", size)
+    END
+
+RETURN
+*** </region>
+*-----------------------------------------------------------------------------
+*** <region name= getScriptGroupList>
+getScriptGroupList:
+*** <desc> </desc>
+
+    GOSUB openScriptGroup ; * open script group app
+    GOSUB performScriptGroupSelection ; * get ids
+    GOSUB doPagination ; * filter ids for paginated response
+    GOSUB buildResponseForScriptGroupList ; *script group
+
+RETURN
+*** </region>
+
+*-----------------------------------------------------------------------------
+
+*** <region name= getScriptIdList>
+getScriptIdList:
+*** <desc> </desc>
+
+    scriptGroup = TF.Complex.get(request, "scriptGroup")
+    
+    GOSUB openAppFieldValues ; *
+    GOSUB performAppFieldValueSelection ; * get ids
+    GOSUB doPagination ; * filter ids for paginated response
+    GOSUB buildScriptIdResponse ; *
+    
+RETURN
+*** </region>
+*-----------------------------------------------------------------------------
+
+*** <region name= openScriptGroup>
+openScriptGroup:
+*** <desc> </desc>
+    fnSgApp = "F.AR.SCRIPT.GROUP"
+    fSgApp = ""
+    
+    CALL OPF(fnSgApp, fSgApp)
+    
+RETURN
+*** </region>
+*-----------------------------------------------------------------------------
+*** <region name= performSelection>
+performScriptGroupSelection:
+*** <desc> </desc>
+        
+    selectCmd = ""
+    recordIdList = ""
+    selected = ""
+    
+    selectCmd = "SELECT ":fnSgApp:" BY DATE.TIME"
+    CALL EB.READLIST(selectCmd, recordIdList, '', totalSelectedRecords, '')
+    
+RETURN
+*** </region>
+*-----------------------------------------------------------------------------
+*** <region name= performAppFieldValueSelection>
+performAppFieldValueSelection:
+
+    selectCmd = ""
+    recordIdList = ""
+    selected = ""
+    
+    IF scriptGroup THEN                                     ;* script group id given, get the ids from the script.group application
+        GOSUB openScriptGroup
+        CALL F.READ(fnSgApp, scriptGroup, record, fSgApp ,err) ;* read the record
+        recordIdList = record<AR.SG.SCRIPT.ID>
+        CHANGE @VM TO @FM IN recordIdList
+    END ELSE
+        selectCmd = "SELECT ":fnAfvApp:" BY DATE.TIME"         ;* select all ids
+        CALL EB.READLIST(selectCmd, recordIdList, '', totalSelectedRecords, '')
+    END
+    
+    
+RETURN
+*** </region>
+*-----------------------------------------------------------------------------
+
+*** <region name= doPagination>
+doPagination:
+*** <desc> </desc>
+    
+    IF NOT(recordIdList)OR NOT(size) OR NOT(page) OR totalSelectedRecords < size THEN
+        RETURN
+    END
+    
+* new ids after pagination
+    newRecordIdList = ""
+    startRec = ""
+    endRec = ""
+    
+    IF page EQ 1 THEN
+        startRec = 1
+        endRec = size
+    END ELSE
+        startRec = ( size * (page - 1) ) + 1
+        endRec = size * page
+    END
+
+* selected will have total number of records that got selected
+    FOR pidx = startRec TO endRec
+        newRecordIdList<-1> = recordIdList<pidx>
+    NEXT pidx
+
+    recordIdList = newRecordIdList
+
+RETURN
+*** </region>
+*-----------------------------------------------------------------------------
+
+*** <region name= buildResponseForScriptGroupList>
+buildResponseForScriptGroupList:
+*** <desc>script group </desc>
+    totalRecord = DCOUNT(recordIdList, @FM)
+    
+    responseArray = TF.Complex.createArray()
+    
+    FOR idx = 1 TO totalRecord
+        
+        item = ""
+        item = TF.Complex.createObject()
+        
+        recId = recordIdList<idx>
+        
+        CALL F.READ(fnSgApp, recId, record, fSgApp ,err) ;* read the record
+        
+        TF.Complex.put(item, "id", recId)
+        TF.Complex.put(item, "shortDescription", record<AR.SG.SHORT.DESC>)
+        TF.Complex.put(item, "fullDescription", record<AR.SG.DESCRIPTION>)
+        TF.Complex.put(item, "status", record<AR.SG.OVERALL.RESULT>)
+        TF.Complex.put(item, "executionTime", record<AR.SG.EXECUTION.TIME>)
+        *TF.Complex.put(item, "product", record<>) ;* add product here
+        
+        TF.Complex.add(responseArray, item)
+        
+    NEXT idx
+    
+    TF.Complex.put(response, "response", responseArray)
+
+RETURN
+*** </region>
+*-----------------------------------------------------------------------------
+
+*** <region name= openAppFieldValues>
+openAppFieldValues:
+*** <desc> </desc>
+
+    fnAfvApp = "F.AR.APP.FIELD.VALUES"
+    fAfvApp = ""
+    
+    CALL OPF(fnAfvApp, fAfvApp)
+    
+RETURN
+*** </region>
+*-----------------------------------------------------------------------------
+
+*** <region name= buildScriptIdResponse>
+buildScriptIdResponse:
+*** <desc> </desc>
+
+    totalRecord = DCOUNT(recordIdList, @FM)
+    
+    responseArray = TF.Complex.createArray()
+    
+    FOR idx = 1 TO totalRecord
+        
+        item = ""
+        item = TF.Complex.createObject()
+        
+        recId = recordIdList<idx>
+        
+        CALL F.READ(fnAfvApp, recId, record, fAfvApp ,err) ;* read the record
+        
+        TF.Complex.put(item, "id", recId)
+        TF.Complex.put(item, "description", record<AR.AFV.DESCRIPTION>)
+        scriptDay = record<AR.AFV.SCRIPT.DAY>
+        date = ""
+        GOSUB getDate ; *
+        TF.Complex.put(item, "day", record<AR.AFV.SCRIPT.DAY>)
+        TF.Complex.put(item, "date", date)
+        TF.Complex.put(item, "executionTime", record<AR.AFV.EXECUTION.TIME>)
+        TF.Complex.put(item, "status", record<AR.AFV.OVERALL.RESULT>)
+        TF.Complex.put(item, "url", recId)
+
+        
+        TF.Complex.add(responseArray, item)
+        
+    NEXT idx
+    
+    TF.Complex.put(response, "response", responseArray)
+    
+RETURN
+*** </region>
+*-----------------------------------------------------------------------------
+*** <region name= getDate>
+getDate:
+*** <desc> </desc>
+    dayList = "Day 1":@FM:"Day 2":@FM:"Day 3":@FM:"Day 4":@FM:"Day 5":@FM:"Day 6"
+    dateList = "26 Dec 2025":@FM:"29 Dec 2025":@FM:"31 Dec 2025":@FM:"1 Jan 2026":@FM:"2 Jan 2026":@FM:"5 Jan 2026"
+    
+    LOCATE scriptDay IN dayList SETTING pos THEN
+        date = dateList<pos>
+    END
+    
+RETURN
+*** </region>
+*-----------------------------------------------------------------------------
+END
